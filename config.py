@@ -14,6 +14,10 @@ DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "anti_fraud_platform")
 
+# 自动检测 SQLite 模式：本地直接连 MySQL，Streamlit Cloud 用 demo.db
+USE_SQLITE = os.path.exists(os.path.join(os.path.dirname(__file__), "demo.db")) or \
+             os.getenv("USE_SQLITE", "").lower() == "true"
+
 # 只允许 SELECT，拦截一切写/改/删操作
 DANGEROUS_KEYWORDS = [
     "DROP", "DELETE", "TRUNCATE", "ALTER", "INSERT", "UPDATE",

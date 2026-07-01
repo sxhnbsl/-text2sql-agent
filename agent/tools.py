@@ -11,8 +11,9 @@
 import re
 import io
 import base64
+import os
+import sqlite3
 import pandas as pd
-import pymysql
 import matplotlib
 matplotlib.use("Agg")  # 无头模式，不弹窗
 import matplotlib.pyplot as plt
@@ -21,8 +22,12 @@ from openai import OpenAI
 from config import (
     DEEPSEEK_API_KEY, MODEL_NAME, API_BASE,
     DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
-    DANGEROUS_KEYWORDS
+    DANGEROUS_KEYWORDS, USE_SQLITE
 )
+
+# 本地模式才需要 pymysql，Streamlit Cloud 只用 sqlite3
+if not USE_SQLITE:
+    import pymysql
 
 # 中文字体（Windows 上常见的黑体）
 plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial Unicode MS"]
@@ -33,11 +38,17 @@ llm_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=API_BASE)
 
 
 def get_db_conn():
-    """每次操作新建一个只读意图的连接。"""
-    return pymysql.connect(
-        host=DB_HOST, port=DB_PORT, user=DB_USER,
-        password=DB_PASSWORD, database=DB_NAME, charset="utf8mb4"
-    )
+    """每次操作新建连接。本地用 MySQL，Streamlit Cloud 用 SQLite。"""
+    if USE_SQLITE:
+        db_path = os.path.join(os.path.dirname(__file__), "..", "demo.db")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+    else:
+        return pymysql.connect(
+            host=DB_HOST, port=DB_PORT, user=DB_USER,
+            password=DB_PASSWORD, database=DB_NAME, charset="utf8mb4"
+        )
 
 
 def get_schema() -> str:
@@ -51,29 +62,42 @@ def get_schema() -> str:
     """
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SHOW TABLES")
-    tables = [r[0] for r in cur.fetchall()]
+
+    if USE_SQLITE:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        tables = [r[0] for r in cur.fetchall()]
+    else:
+        cur.execute("SHOW TABLES")
+        tables = [r[0] for r in cur.fetchall()]
 
     lines = []
     for t in tables:
-        cur.execute(f"SELECT COUNT(*) FROM `{t}`")
+        cur.execute(f"SELECT COUNT(*) FROM \"{t}\"")
         cnt = cur.fetchone()[0]
-        cur.execute(f"DESCRIBE `{t}`")
-        cols = cur.fetchall()
+
+        if USE_SQLITE:
+            cur.execute(f"PRAGMA table_info(\"{t}\")")
+            cols = cur.fetchall()
+        else:
+            cur.execute(f"DESCRIBE `{t}`")
+            cols = cur.fetchall()
+
         lines.append(f"## {t}  ({cnt} rows)")
         for c in cols:
-            pk = "PK" if c[3] == "PRI" else ""
-            lines.append(f"  {c[0]:28s} {c[1]:20s} {pk}")
+            pk = "PK" if c[-1] == 1 else ""
+            name = c[1] if USE_SQLITE else c[0]
+            dtype = c[2] if USE_SQLITE else c[1]
+            lines.append(f"  {name:28s} {dtype:20s} {pk}")
         lines.append("")
     conn.close()
     return "\n".join(lines)
 
 
-SQL_SYSTEM_PROMPT = """你是 SQL 生成专家。根据用户的问题和下面的 MySQL 表结构，生成一条只读 SELECT 语句。
+SQL_SYSTEM_PROMPT = """你是 SQL 生成专家。根据用户的问题和下面的数据库表结构，生成一条只读 SELECT 语句。
 
 规则：
 1. 只能生成 SELECT 语句，绝对不能生成 DROP/DELETE/UPDATE/INSERT/ALTER 等写操作
-2. 用反引号 ` ` 包裹表名和字段名
+2. 表名和字段名用双引号 "" 包裹
 3. 字段值用单引号
 4. 涉及中文 LIKE 查询时用 LIKE '%关键词%'
 5. 时间字段用 created_at / test_date / report_time 等，按问题语义选择

@@ -1,7 +1,8 @@
 .env
 __pycache__/
 *.pyc
-db/*.db
+*.db
+!demo.db
 .venv/
 venv/
 .streamlit/
