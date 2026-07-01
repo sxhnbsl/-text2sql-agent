@@ -1,0 +1,6 @@
+streamlit>=1.30.0
+openai>=1.12.0
+python-dotenv>=1.0.0
+pandas>=2.1.0
+matplotlib>=3.8.0
+pymysql>=1.1.0
